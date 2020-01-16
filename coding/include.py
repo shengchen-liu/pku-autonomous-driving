@@ -66,7 +66,6 @@ import time
 from tqdm import tqdm
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Dict
-from pyquaternion import Quaternion
 from functools import reduce
 from pathlib import Path
 import struct

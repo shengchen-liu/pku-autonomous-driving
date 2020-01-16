@@ -6,6 +6,9 @@ from dataset import *
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
+IMAGE_RGB_MEAN = [0.485, 0.456, 0.406]
+IMAGE_RGB_STD = [0.229, 0.224, 0.225]
+
 class double_conv(nn.Module):
     '''(conv => BN => ReLU) * 2'''
 
@@ -107,3 +110,151 @@ class MyUNet(nn.Module):
         x = self.up2(x, x3)
         x = self.outc(x)
         return x
+
+##############################################################################################
+def make_dummy_data(folder='1024x320', batch_size=8):
+    image_file = glob.glob(os.path.join(config.data_dir, 'dump/%s/image/*.png' % folder))  # 32
+    image_file = sorted(image_file)
+
+    input = []
+    truth_mask = []
+    truth_label = []
+    for b in range(0, batch_size):
+        i = b % len(image_file)
+        image = cv2.imread(image_file[i], cv2.IMREAD_COLOR)
+        mask = np.load(image_file[i].replace('/image/', '/mask/').replace('.png', '.npy'))
+        label = (mask.reshape(4, -1).sum(1) > 0).astype(np.int32)
+
+        num_class, H, W = mask.shape
+        mask = mask.transpose(1, 2, 0) * [1, 2, 3, 4]
+        mask = mask.reshape(-1, 4)
+        mask = mask.max(-1).reshape(1, H, W)
+
+        input.append(image)
+        truth_mask.append(mask)
+        truth_label.append(label)
+
+    input = np.array(input)
+    input = image_to_input(input, IMAGE_RGB_MEAN, IMAGE_RGB_STD)
+
+    truth_mask = np.array(truth_mask)
+    truth_label = np.array(truth_label)
+
+    infor = None
+
+    return input, truth_mask, truth_label, infor
+
+def run_check_net():
+    batch_size = 1
+    C, H, W = 3, IMG_HEIGHT, IMG_WIDTH
+
+    input = np.random.uniform(-1, 1, (batch_size, C, H, W))
+    input = torch.from_numpy(input).float().cuda()
+
+    net = MyUNet(n_classes=8).cuda()
+    net.eval()
+
+    with torch.no_grad():
+        logit = net(input)
+
+    print('')
+    print('input: ', input.shape)
+    print('logit: ', logit.shape)
+    print(net)
+
+def run_check_train():
+    loss_weight = [5, 5, 2, 5]
+    if 1:
+        input, truth_mask, truth_label, infor = make_dummy_data(folder='256x256', batch_size=2)
+        batch_size, C, H, W = input.shape
+
+        print('input shape:{}'.format(input.shape))
+        print("truth label shape: {}".format(truth_label.shape))
+        print("truth mask shape: {}".format(truth_mask.shape))
+        print("truth label.sum :{}".format(truth_label.sum(0)))
+
+    # ---
+    truth_mask = torch.from_numpy(truth_mask).long().cuda()
+    truth_label = torch.from_numpy(truth_label).float().cuda()
+    input = torch.from_numpy(input).float().cuda()
+
+    net = Resnet18_supercolumn_channel64().cuda()
+    net = net.eval()
+
+    with torch.no_grad():
+        logit = net(input)
+        loss = criterion(logit, truth_mask)
+        tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+        dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
+
+        print('loss = %0.5f' % loss.item())
+        print('tn,tp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (tn, tp[0], tp[1], tp[2], tp[3]))
+        print('dn,dp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (dn, dp[0], dp[1], dp[2], dp[3]))
+        print('num_pos,num_neg = %d, [%d,%d,%d,%d] ' % (num_neg, num_pos[0], num_pos[1], num_pos[2], num_pos[3]))
+        print('')
+
+    # exit(0)
+    # dummy sgd to see if it can converge ...
+    optimizer = optim.SGD(filter(lambda p: p.requires_grad, net.parameters()),
+                          lr=0.1, momentum=0.9, weight_decay=0.0001)
+
+    # optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()),lr=0.001)
+
+    print('batch_size =', batch_size)
+    print('----------------------------------------------------------------------')
+    print('[iter ]  loss     |  tn, [tp1,tp2,tp3,tp4]  |  dn, [dp1,dp2,dp3,dp4]  ')
+    print('----------------------------------------------------------------------')
+    # [00000]  0.70383  | 0.00000, 0.46449
+
+    i = 0
+    optimizer.zero_grad()
+    while i <= 200:
+
+        net.train()
+        optimizer.zero_grad()
+
+        logit = net(input)
+        loss = criterion(logit, truth_mask, loss_weight)
+        tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+        dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
+
+        (loss).backward()
+        optimizer.step()
+
+        if i % 10 == 0:
+            print('[%05d] %8.5f  | %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f]  | %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (
+                i,
+                loss.item(),
+                tn, tp[0], tp[1], tp[2], tp[3],
+                dn, dp[0], dp[1], dp[2], dp[3],
+            ))
+        i = i + 1
+    print('')
+
+    if 1:
+        # net.eval()
+        logit = net(input)
+        probability = torch.softmax(logit, 1)
+        probability = one_hot_encode_predict(probability)
+        truth_mask = one_hot_encode_truth(truth_mask)
+
+        probability_mask = probability.data.cpu().numpy()
+        truth_label = truth_label.data.cpu().numpy()
+        truth_mask = truth_mask.data.cpu().numpy()
+        image = input_to_image(input, IMAGE_RGB_MEAN, IMAGE_RGB_STD)
+
+        for b in range(batch_size):
+            print('%2d ------ ' % (b))
+            result = draw_predict_result(image[b], truth_mask[b], truth_label[b], probability_mask[b])
+            image_show('result', result, resize=0.5)
+            cv2.waitKey(0)
+
+# main #################################################################
+if __name__ == '__main__':
+    print('%s: calling main function ... ' % os.path.basename(__file__))
+
+    # run_check_basenet()
+    # run_check_net()
+    run_check_train()
+
+    print('\nsucess!')

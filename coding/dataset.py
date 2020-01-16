@@ -4,7 +4,7 @@ from config import *
 
 DATA_DIR = config.data_dir
 IMG_WIDTH = 1024
-IMG_HEIGHT = IMG_WIDTH // 16 * 5
+IMG_HEIGHT = IMG_WIDTH // 16 * 5 # 320
 MODEL_SCALE = 8
 
 # Our code will generate data, visualization and model checkpoints, they will be persisted to disk in this folder
