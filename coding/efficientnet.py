@@ -9,6 +9,61 @@ print(device)
 IMAGE_RGB_MEAN = [0.485, 0.456, 0.406]
 IMAGE_RGB_STD = [0.229, 0.224, 0.225]
 
+
+def criterion(prediction, mask, regr, size_average=True):
+    # Binary mask loss
+    pred_mask = torch.sigmoid(prediction[:, 0])
+    #     mask_loss = mask * (1 - pred_mask)**2 * torch.log(pred_mask + 1e-12) + (1 - mask) * pred_mask**2 * torch.log(1 - pred_mask + 1e-12)
+    mask_loss = mask * torch.log(pred_mask + 1e-12) + (1 - mask) * torch.log(1 - pred_mask + 1e-12)
+    mask_loss = -mask_loss.mean(0).sum()
+
+    # Regression L1 loss
+    pred_regr = prediction[:, 1:]
+    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)
+    regr_loss = regr_loss.mean(0)
+
+    # Sum
+    loss = mask_loss + regr_loss
+    if not size_average:
+        loss *= prediction.shape[0]
+    return loss
+
+def metric_hit(logit, truth, threshold=0.5):
+    batch_size, num_class, H, W = logit.shape
+
+    with torch.no_grad():
+        logit = logit.view(batch_size, num_class, -1)
+        truth = truth.view(batch_size, -1)
+
+        probability = torch.softmax(logit, 1)
+        p = torch.max(probability, 1)[1]
+        t = truth
+        correct = (p == t)
+
+        index0 = t == 0
+        index1 = t == 1
+        index2 = t == 2
+        index3 = t == 3
+        index4 = t == 4
+
+        num_neg = index0.sum().item()
+        num_pos1 = index1.sum().item()
+        num_pos2 = index2.sum().item()
+        num_pos3 = index3.sum().item()
+        num_pos4 = index4.sum().item()
+
+        neg = correct[index0].sum().item() / (num_neg + 1e-12)
+        pos1 = correct[index1].sum().item() / (num_pos1 + 1e-12)
+        pos2 = correct[index2].sum().item() / (num_pos2 + 1e-12)
+        pos3 = correct[index3].sum().item() / (num_pos3 + 1e-12)
+        pos4 = correct[index4].sum().item() / (num_pos4 + 1e-12)
+
+        num_pos = [num_pos1, num_pos2, num_pos3, num_pos4, ]
+        tn = neg
+        tp = [pos1, pos2, pos3, pos4, ]
+
+    return tn, tp, num_neg, num_pos
+
 class double_conv(nn.Module):
     '''(conv => BN => ReLU) * 2'''
 
@@ -151,7 +206,7 @@ def run_check_net():
     input = np.random.uniform(-1, 1, (batch_size, C, H, W))
     input = torch.from_numpy(input).float().cuda()
 
-    net = MyUNet(n_classes=8).cuda()
+    net = MyUNet(n_classes = 34).cuda()
     net.eval()
 
     with torch.no_grad():
@@ -178,19 +233,19 @@ def run_check_train():
     truth_label = torch.from_numpy(truth_label).float().cuda()
     input = torch.from_numpy(input).float().cuda()
 
-    net = Resnet18_supercolumn_channel64().cuda()
+    net = MyUNet(34).cuda()
     net = net.eval()
 
     with torch.no_grad():
         logit = net(input)
         loss = criterion(logit, truth_mask)
-        tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
-        dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
+        # tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+        # dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
 
         print('loss = %0.5f' % loss.item())
-        print('tn,tp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (tn, tp[0], tp[1], tp[2], tp[3]))
-        print('dn,dp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (dn, dp[0], dp[1], dp[2], dp[3]))
-        print('num_pos,num_neg = %d, [%d,%d,%d,%d] ' % (num_neg, num_pos[0], num_pos[1], num_pos[2], num_pos[3]))
+        # print('tn,tp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (tn, tp[0], tp[1], tp[2], tp[3]))
+        # print('dn,dp = %0.5f, [%0.5f,%0.5f,%0.5f,%0.5f] ' % (dn, dp[0], dp[1], dp[2], dp[3]))
+        # print('num_pos,num_neg = %d, [%d,%d,%d,%d] ' % (num_neg, num_pos[0], num_pos[1], num_pos[2], num_pos[3]))
         print('')
 
     # exit(0)
@@ -215,8 +270,8 @@ def run_check_train():
 
         logit = net(input)
         loss = criterion(logit, truth_mask, loss_weight)
-        tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
-        dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
+        # tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+        # dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask)
 
         (loss).backward()
         optimizer.step()
@@ -253,7 +308,6 @@ def run_check_train():
 if __name__ == '__main__':
     print('%s: calling main function ... ' % os.path.basename(__file__))
 
-    # run_check_basenet()
     # run_check_net()
     run_check_train()
 

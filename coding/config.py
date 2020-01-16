@@ -4,7 +4,7 @@ PROJECT_PATH = os.path.dirname(os.path.realpath(__file__).replace('/coding',''))
 
 class DefaultConfigs(object):
     def __init__(self):
-        self.data_dir = os.path.join(PROJECT_PATH, "input", "3d-object-detection-for-autonomous-vehicles")
+        self.data_dir = os.path.join(PROJECT_PATH, "input")
         self.train_images = os.path.join(self.data_dir, "train_images")  # where is your train images
         self.train_data = os.path.join(self.data_dir, "train_data")
         self.train_lidar = os.path.join(self.data_dir, "train_lidar")

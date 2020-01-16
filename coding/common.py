@@ -3,6 +3,7 @@ import os, sys
 from include import *
 from draw import *
 from file import *
+from lib.net.rate import *
 
 
 
