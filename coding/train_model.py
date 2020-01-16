@@ -175,16 +175,16 @@ def run_train():
         '------------------------------------------------------------------------------------------------------------------------------------------------\n')
     # 0.00000    0.0*   0.0 |  0.690   0.50 [0.00,1.00,0.00,1.00]   0.44 [0.00,0.02,0.00,0.15]  |  0.000   0.00 [0.00,0.00,0.00,0.00]  |  0 hr 00 min
 
-    train_loss = np.zeros(20, np.float32)
-    valid_loss = np.zeros(20, np.float32)
-    batch_loss = np.zeros(20, np.float32)
+    train_loss = np.zeros(3, np.float32)
+    valid_loss = np.zeros(3, np.float32)
+    batch_loss = np.zeros(3, np.float32)
     iter = 0
     i = 0
 
     start = timer()
     while iter < num_iters:
-        sum_train_loss = np.zeros(20, np.float32)
-        sum = np.zeros(20, np.float32)
+        sum_train_loss = np.zeros(3, np.float32)
+        sum = np.zeros(3, np.float32)
 
         optimizer.zero_grad()
         for t, (input, truth_mask, regr_batch, id) in enumerate(train_loader):
@@ -253,7 +253,7 @@ def run_train():
             net.train()
             input = input.cuda()
             truth_mask = truth_mask.cuda()
-
+            regr_batch = regr_batch.cuda()
             logit = data_parallel(net, input)  # net(input)
             loss = criterion(logit, truth_mask, regr_batch)
             tn, tp, num_neg, num_pos = metric_hit(logit[:, 0], truth_mask)
