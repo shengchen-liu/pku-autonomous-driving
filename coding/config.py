@@ -15,6 +15,7 @@ class DefaultConfigs(object):
         self.test_maps = os.path.join(self.data_dir, "test_maps")
 
         self.split = os.path.join(PROJECT_PATH, "split")
+        self.num_classes = 8 # mask, 'x', 'y', 'z', 'yaw', 'pitch', 'roll'
 
         self.results = os.path.join(PROJECT_PATH, "results")
         self.pretrain_model = os.path.join(self.results, "pretrain_model")
@@ -29,7 +30,7 @@ class DefaultConfigs(object):
         self.best_models = os.path.abspath(os.path.join(self.weights, "best_models"))
         self.submit = os.path.abspath(os.path.join(self.results, "submit"))
         self.lr = 0.001 #0.01, 0.001
-        self.batch_size = 8 # 12, 20
+        self.batch_size = 2 # 12, 20
         self.epochs = 10
         self.resume = True
         self.gpus = "0"

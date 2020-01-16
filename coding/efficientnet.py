@@ -11,6 +11,7 @@ IMAGE_RGB_STD = [0.229, 0.224, 0.225]
 
 
 def criterion(prediction, mask, regr, size_average=True):
+    # prediction: mask, 'x', 'y', 'z', 'yaw', 'pitch', 'roll'
     # Binary mask loss
     pred_mask = torch.sigmoid(prediction[:, 0])
     #     mask_loss = mask * (1 - pred_mask)**2 * torch.log(pred_mask + 1e-12) + (1 - mask) * pred_mask**2 * torch.log(1 - pred_mask + 1e-12)
@@ -29,7 +30,8 @@ def criterion(prediction, mask, regr, size_average=True):
     return loss
 
 def metric_hit(logit, truth, threshold=0.5):
-    batch_size, num_class, H, W = logit.shape
+    num_class = 1
+    batch_size, H, W = logit.shape
 
     with torch.no_grad():
         logit = logit.view(batch_size, num_class, -1)
@@ -37,30 +39,21 @@ def metric_hit(logit, truth, threshold=0.5):
 
         probability = torch.softmax(logit, 1)
         p = torch.max(probability, 1)[1]
-        t = truth
+        t = truth.long()
         correct = (p == t)
 
         index0 = t == 0
         index1 = t == 1
-        index2 = t == 2
-        index3 = t == 3
-        index4 = t == 4
 
         num_neg = index0.sum().item()
         num_pos1 = index1.sum().item()
-        num_pos2 = index2.sum().item()
-        num_pos3 = index3.sum().item()
-        num_pos4 = index4.sum().item()
 
         neg = correct[index0].sum().item() / (num_neg + 1e-12)
         pos1 = correct[index1].sum().item() / (num_pos1 + 1e-12)
-        pos2 = correct[index2].sum().item() / (num_pos2 + 1e-12)
-        pos3 = correct[index3].sum().item() / (num_pos3 + 1e-12)
-        pos4 = correct[index4].sum().item() / (num_pos4 + 1e-12)
 
-        num_pos = [num_pos1, num_pos2, num_pos3, num_pos4, ]
+        num_pos = [num_pos1]
         tn = neg
-        tp = [pos1, pos2, pos3, pos4, ]
+        tp = [pos1]
 
     return tn, tp, num_neg, num_pos
 

@@ -36,6 +36,11 @@ class CarDataset(Dataset):
         # Get image name
         idx, labels = self.df.values[idx]
         img_name = self.root_dir.format(idx)
+        # labels:
+        # '2 0.146265 -0.048006 -3.09404 -2.82929 5.06246 23.5584
+        # 70 0.160453 3.1192 -3.10969 -7.25741 7.01096 36.5986
+        # 35 0.169212 3.11246 -3.11718 -10.3985 6.65688 34.0345
+        # 12 0.145069 -0.368432 3.05084 -3.64239 2.89103 6.13721'
 
         # Augmentation
         flip = False
@@ -47,13 +52,11 @@ class CarDataset(Dataset):
         img = preprocess_image(img0, flip=flip) # [320, 1024,3]
         img = np.rollaxis(img, 2, 0) # [3, 320, 1024]
 
-
-
         # Get mask and regression maps
         mask, regr = get_mask_and_regr(img0, labels, flip=flip)
         regr = np.rollaxis(regr, 2, 0)
 
-        return [img, mask, regr]
+        return [img, mask, regr, idx]
 
 
 def imread(path, fast_mode=False):
@@ -153,120 +156,6 @@ def get_img_coords(s):
     img_ys = img_p[:, 1]
     img_zs = img_p[:, 2] # z = Distance from the camera
     return img_xs, img_ys
-
-class BEVImageDataset(Dataset):
-    def __init__(self, mode, input_filepaths, target_filepaths, map_filepaths=None):
-        self.input_filepaths = input_filepaths
-        self.target_filepaths = target_filepaths
-        self.map_filepaths = map_filepaths
-
-        if map_filepaths is not None:
-            assert len(input_filepaths) == len(map_filepaths)
-
-        assert len(input_filepaths) == len(target_filepaths)
-
-    def __len__(self):
-        return len(self.input_filepaths)
-
-    def __getitem__(self, idx):
-        input_filepath = self.input_filepaths[idx]
-        target_filepath = self.target_filepaths[idx]
-
-        sample_token = input_filepath.split("/")[-1].replace("_input.png", "")
-
-        im = cv2.imread(input_filepath, cv2.IMREAD_UNCHANGED)
-
-        if self.map_filepaths:
-            map_filepath = self.map_filepaths[idx]
-            map_im = cv2.imread(map_filepath, cv2.IMREAD_UNCHANGED)
-            im = np.concatenate((im, map_im), axis=2)
-
-        target = cv2.imread(target_filepath, cv2.IMREAD_UNCHANGED)
-
-        im = im.astype(np.float32) / 255
-        target = target.astype(np.int64) # [H, W]
-
-        im = torch.from_numpy(im.transpose(2, 0, 1))
-        target = torch.from_numpy(target)
-
-        return im, target, sample_token
-
-class SteelDataset(Dataset):
-    def __init__(self, split, csv, mode, augment=None):
-
-        self.split = split
-        self.csv = csv
-        self.mode = mode
-        self.augment = augment
-
-        self.uid = list(np.concatenate([np.load(DATA_DIR + '/split/%s' % f, allow_pickle=True) for f in split]))
-        df = pd.concat([pd.read_csv(DATA_DIR + '/%s' % f) for f in csv])
-        df.fillna('', inplace=True)
-        df['Class'] = df['ImageId_ClassId'].str[-1].astype(np.int32)
-        df['Label'] = (df['EncodedPixels'] != '').astype(np.int32)
-        df = df_loc_by_list(df, 'ImageId_ClassId',
-                            [u.split('/')[-1] + '_%d' % c for u in self.uid for c in [1, 2, 3, 4]])
-        self.df = df
-
-    def __str__(self):
-        num1 = (self.df['Class'] == 1).sum()
-        num2 = (self.df['Class'] == 2).sum()
-        num3 = (self.df['Class'] == 3).sum()
-        num4 = (self.df['Class'] == 4).sum()
-        pos1 = ((self.df['Class'] == 1) & (self.df['Label'] == 1)).sum()
-        pos2 = ((self.df['Class'] == 2) & (self.df['Label'] == 1)).sum()
-        pos3 = ((self.df['Class'] == 3) & (self.df['Label'] == 1)).sum()
-        pos4 = ((self.df['Class'] == 4) & (self.df['Label'] == 1)).sum()
-
-        length = len(self)
-        num = len(self) * 4
-        pos = (self.df['Label'] == 1).sum()
-        neg = num - pos
-
-        # ---
-
-        string = ''
-        string += '\tmode    = %s\n' % self.mode
-        string += '\tsplit   = %s\n' % self.split
-        string += '\tcsv     = %s\n' % str(self.csv)
-        string += '\t\tlen   = %5d\n' % len(self)
-        if self.mode == 'train':
-            string += '\t\tnum   = %5d\n' % num
-            string += '\t\tneg   = %5d  %0.3f\n' % (neg, neg / num)
-            string += '\t\tpos   = %5d  %0.3f\n' % (pos, pos / num)
-            string += '\t\tpos1  = %5d  %0.3f  %0.3f\n' % (pos1, pos1 / length, pos1 / pos)
-            string += '\t\tpos2  = %5d  %0.3f  %0.3f\n' % (pos2, pos2 / length, pos2 / pos)
-            string += '\t\tpos3  = %5d  %0.3f  %0.3f\n' % (pos3, pos3 / length, pos3 / pos)
-            string += '\t\tpos4  = %5d  %0.3f  %0.3f\n' % (pos4, pos4 / length, pos4 / pos)
-        return string
-
-    def __len__(self):
-        return len(self.uid)
-
-    def __getitem__(self, index):
-        # print(index)
-        folder, image_id = self.uid[index].split('/')
-
-        rle = [
-            self.df.loc[self.df['ImageId_ClassId'] == image_id + '_1', 'EncodedPixels'].values[0],
-            self.df.loc[self.df['ImageId_ClassId'] == image_id + '_2', 'EncodedPixels'].values[0],
-            self.df.loc[self.df['ImageId_ClassId'] == image_id + '_3', 'EncodedPixels'].values[0],
-            self.df.loc[self.df['ImageId_ClassId'] == image_id + '_4', 'EncodedPixels'].values[0],
-        ]
-        image = cv2.imread(DATA_DIR + '/%s/%s' % (folder, image_id), cv2.IMREAD_COLOR)
-        mask = np.array([run_length_decode(r, height=256, width=1600, fill_value=1) for r in rle])
-
-        infor = Struct(
-            index=index,
-            folder=folder,
-            image_id=image_id,
-        )
-
-        if self.augment is None:
-            return image, mask, infor
-        else:
-            return self.augment(image, mask, infor)
-
 
 '''
 test_dataset : 
@@ -606,144 +495,67 @@ def do_noise(image, mask, noise=8):
     image = np.clip(image, 0, 255).astype(np.uint8)
     return image, mask
 
+# convert euler angle to rotation matrix
+def euler_to_Rot(yaw, pitch, roll):
+    Y = np.array([[cos(yaw), 0, sin(yaw)],
+                  [0, 1, 0],
+                  [-sin(yaw), 0, cos(yaw)]])
+    P = np.array([[1, 0, 0],
+                  [0, cos(pitch), -sin(pitch)],
+                  [0, sin(pitch), cos(pitch)]])
+    R = np.array([[cos(roll), -sin(roll), 0],
+                  [sin(roll), cos(roll), 0],
+                  [0, 0, 1]])
+    return np.dot(Y, np.dot(P, R))
 
-def create_transformation_matrix_to_voxel_space(shape, voxel_size, offset):
-    """
-    Constructs a transformation matrix given an output voxel shape such that (0,0,0) ends up in the center.
-    Voxel_size defines how large every voxel is in world coordinate, (1,1,1) would be the same as Minecraft voxels.
-
-    An offset per axis in world coordinates (metric) can be provided, this is useful for Z (up-down) in lidar points.
-    """
-
-    shape, voxel_size, offset = np.array(shape), np.array(voxel_size), np.array(offset)
-
-    tm = np.eye(4, dtype=np.float32)
-    translation = shape / 2 + offset / voxel_size
-
-    tm = tm * np.array(np.hstack((1 / voxel_size, [1])))
-    tm[:3, 3] = np.transpose(translation)
-    return tm
-
-
-def transform_points(points, transf_matrix):
-    """
-    Transform (3,N) or (4,N) points using transformation matrix.
-    """
-    if points.shape[0] not in [3, 4]:
-        raise Exception("Points input should be (3,N) or (4,N) shape, received {}".format(points.shape))
-    return transf_matrix.dot(np.vstack((points[:3, :], np.ones(points.shape[1]))))[:3, :]
+def draw_line(image, points):
+    color = (255, 0, 0)
+    cv2.line(image, tuple(points[0][:2]), tuple(points[3][:2]), color, 16)
+    cv2.line(image, tuple(points[0][:2]), tuple(points[1][:2]), color, 16)
+    cv2.line(image, tuple(points[1][:2]), tuple(points[2][:2]), color, 16)
+    cv2.line(image, tuple(points[2][:2]), tuple(points[3][:2]), color, 16)
+    return image
 
 
-def car_to_voxel_coords(points, shape, voxel_size, z_offset=0):
-    if len(shape) != 3:
-        raise Exception("Voxel volume shape should be 3 dimensions (x,y,z)")
+def draw_points(image, points):
+    for (p_x, p_y, p_z) in points:
+        cv2.circle(image, (p_x, p_y), int(1000 / p_z), (0, 255, 0), -1)
+#         if p_x > image.shape[1] or p_y > image.shape[0]:
+#             print('Point', p_x, p_y, 'is out of image with shape', image.shape)
+    return image
 
-    if len(points.shape) != 2 or points.shape[0] not in [3, 4]:
-        raise Exception("Input points should be (3,N) or (4,N) in shape, found {}".format(points.shape))
+def visualize(img, coords):
+    # You will also need functions from the previous cells
+    x_l = 1.02
+    y_l = 0.80
+    z_l = 2.31
 
-    tm = create_transformation_matrix_to_voxel_space(shape, voxel_size, (0, 0, z_offset))
-    p = transform_points(points, tm)
-    return p
+    img = img.copy()
+    for point in coords:
+        # Get values
+        x, y, z = point['x'], point['y'], point['z']
+        yaw, pitch, roll = -point['pitch'], -point['yaw'], -point['roll']
+        # Math
+        Rt = np.eye(4)
+        t = np.array([x, y, z])
+        Rt[:3, 3] = t
+        Rt[:3, :3] = euler_to_Rot(yaw, pitch, roll).T
+        Rt = Rt[:3, :]
+        P = np.array([[x_l, -y_l, -z_l, 1],
+                      [x_l, -y_l, z_l, 1],
+                      [-x_l, -y_l, z_l, 1],
+                      [-x_l, -y_l, -z_l, 1],
+                      [0, 0, 0, 1]]).T
+        img_cor_points = np.dot(camera_matrix, np.dot(Rt, P))
+        img_cor_points = img_cor_points.T
+        img_cor_points[:, 0] /= img_cor_points[:, 2]
+        img_cor_points[:, 1] /= img_cor_points[:, 2]
+        img_cor_points = img_cor_points.astype(int)
+        # Drawing
+        img = draw_line(img, img_cor_points)
+        img = draw_points(img, img_cor_points[-1:])
 
-
-def create_voxel_pointcloud(points, shape, voxel_size=(0.5, 0.5, 1), z_offset=0):
-    points_voxel_coords = car_to_voxel_coords(points.copy(), shape, voxel_size, z_offset)
-    points_voxel_coords = points_voxel_coords[:3].transpose(1, 0)
-    points_voxel_coords = np.int0(points_voxel_coords)
-
-    bev = np.zeros(shape, dtype=np.float32)
-    bev_shape = np.array(shape)
-
-    within_bounds = (np.all(points_voxel_coords >= 0, axis=1) * np.all(points_voxel_coords < bev_shape, axis=1))
-
-    points_voxel_coords = points_voxel_coords[within_bounds]
-    coord, count = np.unique(points_voxel_coords, axis=0, return_counts=True)
-
-    # Note X and Y are flipped:
-    bev[coord[:, 1], coord[:, 0], coord[:, 2]] = count
-
-    return bev
-
-
-def normalize_voxel_intensities(bev, max_intensity=16):
-    return (bev / max_intensity).clip(0, 1)
-
-
-def move_boxes_to_car_space(boxes, ego_pose):
-    """
-    Move boxes from world space to car space.
-    Note: mutates input boxes.
-    """
-    translation = -np.array(ego_pose['translation'])
-    rotation = Quaternion(ego_pose['rotation']).inverse
-
-    for box in boxes:
-        # Bring box to car space
-        box.translate(translation)
-        box.rotate(rotation)
-
-
-def scale_boxes(boxes, factor):
-    """
-    Note: mutates input boxes
-    """
-    for box in boxes:
-        box.wlh = box.wlh * factor
-
-
-def draw_boxes(im, voxel_size, boxes, classes, z_offset=0.0):
-    for box in boxes:
-        # We only care about the bottom corners
-        corners = box.bottom_corners()
-        corners_voxel = car_to_voxel_coords(corners, im.shape, voxel_size, z_offset).transpose(1, 0)
-        corners_voxel = corners_voxel[:, :2]  # Drop z coord
-
-        class_color = classes.index(box.name) + 1
-
-        if class_color == 0:
-            raise Exception("Unknown class: {}".format(box.name))
-
-        cv2.drawContours(im, np.int0([corners_voxel]), 0, (class_color, class_color, class_color), -1)
-
-def get_semantic_map_around_ego(map_mask, ego_pose, voxel_size, output_shape):
-
-    def crop_image(image: np.array,
-                           x_px: int,
-                           y_px: int,
-                           axes_limit_px: int) -> np.array:
-                x_min = int(x_px - axes_limit_px)
-                x_max = int(x_px + axes_limit_px)
-                y_min = int(y_px - axes_limit_px)
-                y_max = int(y_px + axes_limit_px)
-
-                # cropped_image = image[0]
-                cropped_image = image[y_min:y_max, x_min:x_max]
-
-                return cropped_image
-
-    pixel_coords = map_mask.to_pixel_coords(ego_pose['translation'][0], ego_pose['translation'][1])
-
-    extent = voxel_size * output_shape[0] * 0.5
-    scaled_limit_px = int(extent * (1.0 / (map_mask.resolution)))
-    mask_raster = map_mask.mask()
-
-    cropped = crop_image(mask_raster, pixel_coords[0], pixel_coords[1], int(scaled_limit_px * np.sqrt(2)))
-
-    ypr_rad = Quaternion(ego_pose['rotation']).yaw_pitch_roll
-    yaw_deg = -np.degrees(ypr_rad[0])
-
-    rotated_cropped = np.array(Image.fromarray(cropped).rotate(yaw_deg))
-    ego_centric_map = crop_image(rotated_cropped, rotated_cropped.shape[1] / 2, rotated_cropped.shape[0] / 2,
-                                 scaled_limit_px)[::-1]
-
-    ego_centric_map = cv2.resize(ego_centric_map, output_shape[:2], cv2.INTER_NEAREST)
-    return ego_centric_map.astype(np.float32) / 255
-
-
-def visualize_lidar_of_sample(dataset, sample_token, axes_limit=80):
-    sample = dataset.get("sample", sample_token)
-    sample_lidar_token = sample["data"]["LIDAR_TOP"]
-    dataset.render_sample_data(sample_lidar_token, axes_limit=axes_limit)
+    return img
 
 ##############################################################
 
@@ -956,18 +768,22 @@ def run_check_train_data():
     for n in range(0, len(train_dataset)):
         i = n  # i = np.random.choice(len(dataset))
 
-        image, mask, regr = train_dataset[n]
+        image, mask, regr, id = train_dataset[n]
 
-        plt.figure(figsize=(16, 16))
+        fig = plt.figure(figsize=(16, 16))
         plt.imshow(np.rollaxis(image, 0, 3))
+        plt.title(id)
+        print(id)
         plt.show()
 
         plt.figure(figsize=(16, 16))
         plt.imshow(mask)
+        plt.title(id)
         plt.show()
 
         plt.figure(figsize=(16, 16))
         plt.imshow(regr[-2])
+        plt.title(id)
         plt.show()
 
 
@@ -1009,60 +825,54 @@ def run_check_data_loader():
         batch_size=4,
         num_workers=4)
 
-    # loader = DataLoader(
-    #     dataset,
-    #     # sampler     = BalanceClassSampler(dataset),
-    #     # sampler     = SequentialSampler(dataset),
-    #     sampler=RandomSampler(dataset),
-    #     batch_size=32,
-    #     drop_last=False,
-    #     num_workers=0,
-    #     pin_memory=True,
-    #     collate_fn=null_collate
-    # )
-
-    # image, mask, regr = train_dataset[n]
-
-    for t, (input, truth, regr) in enumerate(loader):
+    for t, (input, truth, regr, id) in enumerate(loader):
 
         print('----t=%d---' % t)
         print('')
         print('input', input.shape)
         print('truth', truth.shape)
+        print('id', id)
         print('')
 
         if 1:
             batch_size = input.shape[0]
             input = input.data.cpu().numpy()
-            # input = (input * 255).astype(np.uint8)
-            # input = input.transpose(0, 2, 3, 1)
-            # input = 255-(input*255).astype(np.uint8)
-
             truth = truth.data.cpu().numpy()
             for b in range(batch_size):
+                fig, axes = plt.subplots(3, figsize=(20, 20))
+                # img = input[b]
+                # axes[0].imshow(np.rollaxis(img, 0, 3))
+                # temp = train.loc[train['ImageId'] == id[b]]['PredictionString'].values[0]
+                # img_vis = visualize(img, str2coords(temp))
+                # axes[1].imshow(np.rollaxis(img_vis, 0, 3))
+                # plt.show()
+
                 image = input[b]
                 mask = truth[b]
                 reg = regr[b]
-                plt.figure(figsize=(16, 16))
-                plt.imshow(np.rollaxis(image, 0, 3))
+                fig.suptitle(id[b])
+                axes[0].imshow(np.rollaxis(image, 0, 3))
+                axes[0].set_title('image')
+                axes[1].imshow(mask)
+                axes[1].set_title('mask')
+                axes[2].imshow(reg[-2])
+                axes[2].set_title('yaw')
                 plt.show()
 
-                plt.figure(figsize=(16, 16))
-                plt.imshow(mask)
-                plt.show()
-
-                plt.figure(figsize=(16, 16))
-                plt.imshow(reg[-2])
-                plt.show()
-                # print(infor[b].image_id)
+                # plt.imshow(np.rollaxis(image, 0, 3))
+                # plt.title(id[b])
+                # plt.show()
                 #
-                # image = input[b]
-                # mask = truth[b]
-                # overlay = np.vstack([m for m in mask])
+                # plt.figure(figsize=(16, 16))
+                # plt.imshow(mask)
+                # plt.title(id[b])
+                # plt.show()
                 #
-                # image_show('image', image, 0.5)
-                # image_show_norm('mask', overlay, 0, 1, 0.5)
-                # cv2.waitKey(0)
+                # plt.figure(figsize=(16, 16))
+                # plt.imshow(reg[-2])
+                # plt.title(id[b])
+                # plt.show()
+                #
 
 
 def run_check_augment():

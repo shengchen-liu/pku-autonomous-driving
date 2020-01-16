@@ -1,4 +1,7 @@
 import os, sys
+from common import *
+from dataset import *
+from efficientnet import *
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -6,14 +9,33 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 # Root directory of the project : coding
 ROOT_DIR = os.path.abspath("../")
 CURRENT_DIR = os.path.abspath(".")
+NUM_CLASSES = config.num_classes
 
 # Import
 sys.path.append(ROOT_DIR)  # To find local version of the library
 sys.path.append(CURRENT_DIR) # current path
 
-from common import *
-from dataset import *
-from efficientnet import *
+
+
+### loss ###################################################################
+
+def one_hot_encode_truth(truth, num_class=NUM_CLASSES):
+    one_hot = truth.repeat(1, num_class, 1, 1)
+    arange = torch.arange(1, num_class + 1).view(1, num_class, 1, 1).to(truth.device) #with values from the interval [start, end)
+    one_hot = (one_hot == arange).float()
+    return one_hot
+
+
+def one_hot_encode_predict(predict, num_class=NUM_CLASSES):
+    value, index = torch.max(predict, 1, keepdim=True)
+
+    value = value.repeat(1, num_class, 1, 1)
+    index = index.repeat(1, num_class, 1, 1)
+    arange = torch.arange(1, num_class + 1).view(1, num_class, 1, 1).to(predict.device)
+
+    one_hot = (index == arange).float()
+    value = value * one_hot
+    return value
 
 def run_train():
     out_dir = os.path.join(config.results, config.model_name)
@@ -62,7 +84,7 @@ def run_train():
         df_eval,
         train_images_dir,
         training=True)
-    print(train_dataset)
+    # print(train_dataset)
 
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -87,7 +109,7 @@ def run_train():
 
     ## net ----------------------------------------
     log.write('** net setting **\n')
-    net = MyUNet(34).cuda()
+    net = MyUNet(config.num_classes).cuda()
     log.write('\tinitial_checkpoint = %s\n' % initial_checkpoint)
 
     if initial_checkpoint is not None:
@@ -165,24 +187,21 @@ def run_train():
         sum = np.zeros(20, np.float32)
 
         optimizer.zero_grad()
-        for t, (input, truth_mask, sample_token) in enumerate(train_loader):
+        for t, (input, truth_mask, regr_batch, id) in enumerate(train_loader):
 
             batch_size = input.shape[0]
             iter = i + start_iter
             epoch = (iter - start_iter) * batch_size / len(train_dataset) + start_epoch
 
-            # if 0:
+            # Validation
             if (iter % iter_valid == 0):
                 valid_loss = do_valid(net, valid_loader, out_dir)  #
                 # tensorboard
-                # loss    hit_neg,pos1,2,3,4
+                # loss    hit_neg, pos1
                 writer.add_scalars('Loss/loss', {'valid': valid_loss[0]}, iter)
-                # writer.add_scalars('Loss/hit_neg', {'valid': valid_loss[1]}, iter)
-                # writer.add_scalars('Loss/pos1',  {'valid': valid_loss[2]}, iter)
-                # writer.add_scalars('Loss/pos2',  {'valid': valid_loss[3]}, iter)
-                # writer.add_scalars('Loss/pos3',  {'valid': valid_loss[4]}, iter)
-                # writer.add_scalars('Loss/pos4',  {'valid': valid_loss[5]}, iter)
-                # #
+                writer.add_scalars('Loss/hit_neg', {'valid': valid_loss[1]}, iter)
+                writer.add_scalars('Loss/pos1',  {'valid': valid_loss[2]}, iter)
+
                 # # # dice_neg,pos1,2,3,4
                 # writer.add_scalars('Valid_dice_neg/loss', {'valid': valid_loss[6]}, iter)
                 # writer.add_scalars('Valid_dice_neg/pos1',  {'valid': valid_loss[7]}, iter)
@@ -191,6 +210,7 @@ def run_train():
                 # writer.add_scalars('Valid_dice_neg/pos4',  {'valid': valid_loss[10]}, iter)
                 # pass
 
+            # Logging
             if (iter % iter_log == 0):
                 print('\r', end='', flush=True)
                 asterisk = '*' if iter in iter_save else ' '
@@ -210,7 +230,7 @@ def run_train():
                 # writer.add_scalars('Loss/pos3',  {'train': train_loss[4]}, iter)
                 # writer.add_scalars('Loss/pos4',  {'train': train_loss[5]}, iter)
 
-            # if 0:
+            # Saving
             if iter in iter_save:
                 torch.save(net.state_dict(), out_dir + '/checkpoint/%08d_model.pth' % (iter))
                 torch.save({
@@ -235,8 +255,8 @@ def run_train():
             truth_mask = truth_mask.cuda()
 
             logit = data_parallel(net, input)  # net(input)
-            loss = criterion(logit, truth_mask, loss_weight)
-            tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+            loss = criterion(logit, truth_mask, regr_batch)
+            tn, tp, num_neg, num_pos = metric_hit(logit[:, 0], truth_mask)
 
             (loss / iter_accum).backward()
             if (iter % iter_accum) == 0:
@@ -247,9 +267,9 @@ def run_train():
             l = np.array([loss.item(), tn, *tp])
             n = np.array([batch_size, num_neg, *num_pos])
 
-            batch_loss[:6] = l
-            sum_train_loss[:6] += l * n
-            sum[:6] += n
+            batch_loss = l
+            sum_train_loss += l * n
+            sum += n
             if iter % iter_smooth == 0:
                 train_loss = sum_train_loss / (sum + 1e-12)
                 sum_train_loss[...] = 0
@@ -264,31 +284,6 @@ def run_train():
                     batch_loss[0])
                 , end='', flush=True)
             i = i + 1
-
-            # debug-----------------------------
-            if config.debug:
-                for di in range(3):
-                    if (iter + di) % 1000 == 0:
-
-                        probability = torch.softmax(logit, 1)
-                        image = input_to_image(input, IMAGE_RGB_MEAN, IMAGE_RGB_STD)
-
-                        probability = one_hot_encode_predict(probability)
-                        truth_mask = one_hot_encode_truth(truth_mask)
-
-                        probability_mask = probability.data.cpu().numpy()
-                        truth_label = truth_label.data.cpu().numpy()
-                        truth_mask = truth_mask.data.cpu().numpy()
-
-                        for b in range(batch_size):
-                            result = draw_predict_result(image[b], truth_mask[b], truth_label[b], probability_mask[b],
-                                                         stack='vertical')
-
-                            image_show('result', result, resize=1)
-                            cv2.imwrite(out_dir + '/train/%05d.png' % (di * 100 + b), result)
-                            cv2.waitKey(1)
-                            pass
-
         pass  # -- end of one data loader --
     pass  # -- end of all iterations --
 
@@ -296,20 +291,20 @@ def run_train():
 
 def do_valid(net, valid_loader, out_dir=None):
     # out_dir=None
-    valid_num = np.zeros(34, np.float32)
-    valid_loss = np.zeros(34, np.float32)
+    valid_num = np.zeros(3, np.float32)
+    valid_loss = np.zeros(3, np.float32)
 
-    for t, (input, truth_mask, sample_token) in enumerate(valid_loader):
-
+    for t, (input, truth_mask, regr_batch, id) in enumerate(valid_loader):
         # if b==5: break
         net.eval()
         input = input.cuda()
         truth_mask = truth_mask.cuda()
+        regr_batch = regr_batch.cuda()
 
         with torch.no_grad():
             logit = data_parallel(net, input)  # net(input)
-            loss = criterion(logit, truth_mask)
-            tn, tp, num_neg, num_pos = metric_hit(logit, truth_mask)
+            loss = criterion(logit, truth_mask, regr_batch, size_average=False)
+            tn, tp, num_neg, num_pos = metric_hit(logit[:, 0], truth_mask)
             # dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask, threshold=0.5, sum_threshold=100)
 
             # zz=0
@@ -333,7 +328,7 @@ def do_valid(net, valid_loader, out_dir=None):
             truth_mask = truth_mask.data.cpu().numpy()
 
             for b in range(0, batch_size, 4):
-                image_id = infor[b].image_id[:-4]
+                # image_id = infor[b].image_id[:-4]
                 result = draw_predict_result(image[b], truth_mask[b], truth_label[b], probability_mask[b],
                                              stack='vertical')
                 draw_shadow_text(result, '%05d    %s.jpg' % (valid_num[0] - batch_size + b, image_id), (5, 24), 1,
@@ -355,26 +350,6 @@ def do_valid(net, valid_loader, out_dir=None):
     return valid_loss
 
 
-def evaluate_model(epoch, history=None):
-    net.eval()
-    loss = 0
-
-    with torch.no_grad():
-        for img_batch, mask_batch, regr_batch in dev_loader:
-            img_batch = img_batch.to(device)
-            mask_batch = mask_batch.to(device)
-            regr_batch = regr_batch.to(device)
-
-            output = model(img_batch)
-
-            loss += criterion(output, mask_batch, regr_batch, size_average=False).data
-
-    loss /= len(dev_loader.dataset)
-
-    if history is not None:
-        history.loc[epoch, 'dev_loss'] = loss.cpu().numpy()
-
-    print('Dev loss: {:.4f}'.format(loss))
 
 # main #################################################################
 if __name__ == '__main__':
