@@ -30,7 +30,7 @@ class DefaultConfigs(object):
         self.best_models = os.path.abspath(os.path.join(self.weights, "best_models"))
         self.submit = os.path.abspath(os.path.join(self.results, "submit"))
         self.lr = 0.001 #0.01, 0.001
-        self.batch_size = 2 # 12, 20
+        self.batch_size = 8 # 12, 20
         self.epochs = 10
         self.resume = True
         self.gpus = "0"
