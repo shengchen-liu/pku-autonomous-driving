@@ -35,7 +35,7 @@ class CarDataset(Dataset):
 
         # Get image name
         idx, labels = self.df.values[idx]
-        img_name = self.root_dir.format(idx)
+        # img_name = self.root_dir.format(idx)
         # labels:
         # '2 0.146265 -0.048006 -3.09404 -2.82929 5.06246 23.5584
         # 70 0.160453 3.1192 -3.10969 -7.25741 7.01096 36.5986
@@ -48,7 +48,8 @@ class CarDataset(Dataset):
             flip = np.random.randint(10) == 1
 
         # Read image
-        img0 = imread(img_name, True) # B G R [2710, 3384, 3]
+        # img0 = imread(img_name, True)
+        img0 = createMaskImages(idx) # B G R [2710, 3384, 3] -> [1255, 3384, 3] cut the top half because it is sky, no cars
         img = preprocess_image(img0, flip=flip) # [320, 1024,3]
         img = np.rollaxis(img, 2, 0) # [3, 320, 1024]
 
@@ -57,6 +58,22 @@ class CarDataset(Dataset):
         regr = np.rollaxis(regr, 2, 0)
 
         return [img, mask, regr, idx]
+
+
+def createMaskImages(imageName):
+    trainimage = cv2.imread(INPUT_FOLDER + "/train_images/" + imageName + '.jpg')
+    imagemask = cv2.imread(INPUT_FOLDER + "/train_masks/" + imageName + ".jpg", 0)
+    try:
+        imagemaskinv = cv2.bitwise_not(imagemask) # opposite of the mask
+        res = cv2.bitwise_and(trainimage, trainimage, mask=imagemaskinv) # src1, src2
+        # dst = src1 && src2 if mask != 0
+
+        # cut upper half,because it doesn't contain cars.
+        res = res[res.shape[0] // 2:]
+        return res
+    except:
+        trainimage = trainimage[trainimage.shape[0] // 2:]
+        return trainimage
 
 
 def imread(path, fast_mode=False):
@@ -613,140 +630,6 @@ def prepare_training_data_for_scene(first_sample_token, dataset, output_folder, 
         cv2.imwrite(os.path.join(output_folder, "{}_map.png".format(sample_token)), semantic_im)
 
         sample_token = sample["next"]
-
-def generate_bev_data():
-    dataset = LyftDataset(data_path=config.data_dir, json_path=config.train_data) # config.test_data
-    records = [(dataset.get('sample', record['first_sample_token'])['timestamp'], record) for record in
-               dataset.scene]
-    entries = []
-
-    for start_time, record in sorted(records):
-        start_time = dataset.get('sample', record['first_sample_token'])['timestamp'] / 1000000
-
-        token = record['token']
-        name = record['name']
-        date = datetime.utcfromtimestamp(start_time)
-        host = "-".join(record['name'].split("-")[:2])
-        first_sample_token = record["first_sample_token"]
-
-        entries.append((host, name, date, token, first_sample_token))
-
-    df = pd.DataFrame(entries, columns=["host", "scene_name", "date", "scene_token", "first_sample_token"])
-
-    entries = None
-    host_count_df = df.groupby("host")['scene_token'].count()
-    print(host_count_df)
-
-    # Let's split the data by car to get a validation set.
-    validation_hosts = ["host-a007", "host-a008", "host-a009"]
-    #
-    validation_df = df[df["host"].isin(validation_hosts)]
-    vi = validation_df.index
-    train_df = df[~df.index.isin(vi)]
-    df = None
-    vi = None
-    print(len(train_df), len(validation_df), "train/validation split scene counts")
-
-    sample_token = train_df.first_sample_token.values[0] # 'cea0bba4b425537cca52b17bf81569a20da1ca6d359f33227f0230d59d9d2881'
-    # sample_token = 'cea0bba4b425537cca52b17bf81569a20da1ca6d359f33227f0230d59d9d2881'
-    sample = dataset.get("sample", sample_token)
-
-    sample_lidar_token = sample["data"]["LIDAR_TOP"]
-    lidar_data = dataset.get("sample_data", sample_lidar_token)
-    # lidar_filepath = dataset.get_sample_data_path(sample_lidar_token)
-
-    ego_pose = dataset.get("ego_pose", lidar_data["ego_pose_token"])
-    # calibrated_sensor = dataset.get("calibrated_sensor", lidar_data["calibrated_sensor_token"])
-
-    # Homogeneous transformation matrix from car frame to world frame.
-    # global_from_car = transform_matrix(ego_pose['translation'],
-    #                                    Quaternion(ego_pose['rotation']), inverse=False)
-
-    # Homogeneous transformation matrix from sensor coordinate frame to ego car frame.
-    # car_from_sensor = transform_matrix(calibrated_sensor['translation'], Quaternion(calibrated_sensor['rotation']),
-    #                                    inverse=False)
-
-    # lidar_pointcloud = LidarPointCloud.from_file(lidar_filepath)
-    #
-    # # The lidar pointcloud is defined in the sensor's reference frame.
-    # # We want it in the car's reference frame, so we transform each point
-    # lidar_pointcloud.transform(car_from_sensor)
-
-    # A sanity check, the points should be centered around 0 in car space.
-    # plt.hist(lidar_pointcloud.points[0], alpha=0.5, bins=30, label="X")
-    # plt.hist(lidar_pointcloud.points[1], alpha=0.5, bins=30, label="Y")
-    # plt.legend()
-    # plt.xlabel("Distance from car along axis")
-    # plt.ylabel("Amount of points")
-    # plt.show()
-
-    map_mask = dataset.map[0]["mask"]
-    sample = None
-    lidar_data = None
-
-    # ego_centric_map = get_semantic_map_around_ego(map_mask, ego_pose, voxel_size=0.4, output_shape=(336, 336))
-    # plt.imshow(ego_centric_map)
-    # plt.show()
-
-
-    voxel_size = (0.4, 0.4, 1.5)
-    z_offset = -2.0
-    bev_shape = (336, 336, 3)
-
-    # bev = create_voxel_pointcloud(lidar_pointcloud.points, bev_shape, voxel_size=voxel_size, z_offset=z_offset)
-
-    # So that the values in the voxels range from 0,1 we set a maximum intensity.
-    # bev = normalize_voxel_intensities(bev)
-
-    # plt.figure(figsize=(16, 8))
-    # plt.imshow(bev)
-    # plt.show()
-
-    # Boxes
-    # boxes = dataset.get_boxes(sample_lidar_token)
-    # '79cfdc04cfdfb870c338df801e5bfc5dcf0f6cd325a5229aedda4031b8b198bc'
-    # target_im = np.zeros(bev.shape[:3], dtype=np.uint8)
-
-    # move_boxes_to_car_space(boxes, ego_pose)
-    # scale_boxes(boxes, 0.8)
-    # draw_boxes(target_im, voxel_size, boxes, classes, z_offset=z_offset)
-
-    # plt.figure(figsize=(8, 8))
-    # plt.imshow((target_im > 0).astype(np.float32), cmap='Set2')
-    # plt.show()
-
-    # We scale down each box so they are more separated when projected into our coarse voxel space.
-    box_scale = 0.8
-
-    # "bev" stands for birds eye view
-
-    train_data_folder = os.path.join(ARTIFACTS_FOLDER, "bev_train_data")
-    validation_data_folder = os.path.join(ARTIFACTS_FOLDER, "./bev_validation_data")
-    NUM_WORKERS = os.cpu_count() * 1
-
-    for df, data_folder in [(train_df, train_data_folder), (validation_df, validation_data_folder)]:
-        print("Preparing data into {} using {} workers".format(data_folder, NUM_WORKERS))
-        first_samples = df.first_sample_token.values
-
-        os.makedirs(data_folder, exist_ok=True)
-        for first_sample in tqdm(first_samples):
-
-            prepare_training_data_for_scene(first_sample_token=first_sample, dataset=dataset, output_folder=data_folder,
-                                            bev_shape=bev_shape, voxel_size=voxel_size, z_offset=z_offset, box_scale=box_scale,
-                                            map_mask=map_mask)
-        # process_func = partial(prepare_training_data_for_scene,
-        #                        dataset=dataset, output_folder=data_folder, bev_shape=bev_shape, voxel_size=voxel_size, z_offset=z_offset,
-        #                        box_scale=box_scale, map_mask=map_mask)
-        #
-        # pool = Pool(1)
-        # for _ in tqdm(pool.imap_unordered(process_func, first_samples), total=len(first_samples)):
-        #     pass
-        # pool.close()
-        # del pool
-
-    # Failed to load Lidar Pointcloud for 9cb04b1a4d476fd0782431764c7b55e91c6dbcbc6197c3dab3e044f13d058011: cannot reshape array of size 265728 into shape (5):
-    #
-
 
 def run_check_train_data():
     train_images_dir = INPUT_FOLDER + '/train_images/{}.jpg'

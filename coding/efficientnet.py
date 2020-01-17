@@ -12,16 +12,18 @@ IMAGE_RGB_STD = [0.229, 0.224, 0.225]
 
 def criterion(prediction, mask, regr, size_average=True):
     # prediction: mask, 'x', 'y', 'z', 'yaw', 'pitch', 'roll'
+    #  prediction[batch_size, 8, 40, 128]
     # Binary mask loss
-    pred_mask = torch.sigmoid(prediction[:, 0])
+    pred_mask = torch.sigmoid(prediction[:, 0]) #[batch_size, 40, 128]
     #     mask_loss = mask * (1 - pred_mask)**2 * torch.log(pred_mask + 1e-12) + (1 - mask) * pred_mask**2 * torch.log(1 - pred_mask + 1e-12)
-    mask_loss = mask * torch.log(pred_mask + 1e-12) + (1 - mask) * torch.log(1 - pred_mask + 1e-12)
-    mask_loss = -mask_loss.mean(0).sum()
+    # mask_loss = mask * torch.log(pred_mask + 1e-12) + (1 - mask) * torch.log(1 - pred_mask + 1e-12)  # [4, 40, 128] cross engtropy
+    mask_loss = nn.BCEWithLogitsLoss()(pred_mask, mask)
+    mask_loss = -mask_loss.mean(0).sum() # sum of batch loss
 
     # Regression L1 loss
-    pred_regr = prediction[:, 1:]
-    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)
-    regr_loss = regr_loss.mean(0)
+    pred_regr = prediction[:, 1:] # [batch_size, 7, 40, 128]
+    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1) # regr_loss per pixel in mask. [batch_size]
+    regr_loss = regr_loss.mean(0) # avg of batch loss
 
     # Sum
     loss = mask_loss + regr_loss
@@ -226,7 +228,7 @@ def run_check_train():
     truth_label = torch.from_numpy(truth_label).float().cuda()
     input = torch.from_numpy(input).float().cuda()
 
-    net = MyUNet(34).cuda()
+    net = MyUNet(config.num_classes).cuda()
     net = net.eval()
 
     with torch.no_grad():

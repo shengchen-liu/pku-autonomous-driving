@@ -75,6 +75,18 @@ def run_train():
     log.write('** dataset setting **\n')
     train_images_dir = config.data_dir + '/train_images/{}.jpg'
     train = pd.read_csv(os.path.join(config.data_dir, 'train.csv'))
+
+    print("Cleaning train set of corrupted image files")
+    print("len train before: ", len(train))
+    indexNames = train[(train['ImageId'] == "ID_1a5a10365") |
+                       (train['ImageId'] == "ID_4d238ae90") |
+                       (train['ImageId'] == "ID_408f58e9f") |
+                       (train['ImageId'] == "ID_bb1d991f6") |
+                       (train['ImageId'] == "ID_c44983aeb")].index
+    train.drop(indexNames, inplace=True)
+    print("len cleaning list: ", len(indexNames))
+    print("len train after cleaning: ", len(train), "\n")
+
     df_train, df_eval = train_test_split(train, test_size=0.01, random_state=42)
     train_dataset = CarDataset(
         df_train,
@@ -195,6 +207,7 @@ def run_train():
 
             # Validation
             if (iter % iter_valid == 0):
+                net.eval()
                 valid_loss = do_valid(net, valid_loader, out_dir)  #
                 # tensorboard
                 # loss    hit_neg, pos1
@@ -296,7 +309,6 @@ def do_valid(net, valid_loader, out_dir=None):
 
     for t, (input, truth_mask, regr_batch, id) in enumerate(valid_loader):
         # if b==5: break
-        net.eval()
         input = input.cuda()
         truth_mask = truth_mask.cuda()
         regr_batch = regr_batch.cuda()
