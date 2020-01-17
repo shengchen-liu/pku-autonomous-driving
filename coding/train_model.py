@@ -195,8 +195,8 @@ def run_train():
 
     start = timer()
     while iter < num_iters:
-        sum_train_loss = np.zeros(3, np.float32)
-        sum = np.zeros(3, np.float32)
+        sum_train_loss = np.zeros(5, np.float32)
+        sum = np.zeros(5, np.float32)
 
         optimizer.zero_grad()
         for t, (input, truth_mask, regr_batch, id) in enumerate(train_loader):
@@ -285,7 +285,7 @@ def run_train():
             print('\r', end='', flush=True)
             asterisk = ' '
             print(
-                '%0.5f  %5.1f%s %5.1f |  %5.3f  |  %5.3f ' % ( \
+                '%0.5f  %5.1f%s %5.1f |  %5.3f  %5.3f   %5.3f|  %5.3f   %5.3f   %5.3f' % ( \
                     rate, iter / 1000, asterisk, epoch,
                     valid_loss[0], valid_loss[1], valid_loss[2],
                     train_loss[0], train_loss[1], train_loss[2])
