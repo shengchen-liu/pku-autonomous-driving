@@ -47,7 +47,7 @@ def run_train():
 
     schduler = NullScheduler(lr=0.001)
     batch_size = config.batch_size  # 8
-    iter_accum = 4
+    iter_accum = 1
 
     # loss_weight = [0.2] + [1.0] * (len(classes)-1)  #
     train_sampler = RandomSampler  # RandomSampler, FourBalanceClassSampler
@@ -182,14 +182,14 @@ def run_train():
     log.write(
         '                      |---- VALID----------------------|---------- TRAIN/BATCH ------------------------------\n')
     log.write(
-        'rate     iter   epoch |  loss   |  loss   | time         \n')
+        'rate     iter   epoch |  loss   mask_loss     regr_loss|   loss   mask_loss      regr_loss| time         \n')
     log.write(
         '------------------------------------------------------------------------------------------------------------------------------------------------\n')
     # 0.00000    0.0*   0.0 |  0.690   0.50 [0.00,1.00,0.00,1.00]   0.44 [0.00,0.02,0.00,0.15]  |  0.000   0.00 [0.00,0.00,0.00,0.00]  |  0 hr 00 min
 
-    train_loss = np.zeros(3, np.float32)
-    valid_loss = np.zeros(3, np.float32)
-    batch_loss = np.zeros(3, np.float32)
+    train_loss = np.zeros(5, np.float32)
+    valid_loss = np.zeros(5, np.float32)
+    batch_loss = np.zeros(5, np.float32)
     iter = 0
     i = 0
 
@@ -212,26 +212,20 @@ def run_train():
                 # tensorboard
                 # loss    hit_neg, pos1
                 writer.add_scalars('Loss/loss', {'valid': valid_loss[0]}, iter)
-                writer.add_scalars('Loss/hit_neg', {'valid': valid_loss[1]}, iter)
-                writer.add_scalars('Loss/pos1',  {'valid': valid_loss[2]}, iter)
-
-                # # # dice_neg,pos1,2,3,4
-                # writer.add_scalars('Valid_dice_neg/loss', {'valid': valid_loss[6]}, iter)
-                # writer.add_scalars('Valid_dice_neg/pos1',  {'valid': valid_loss[7]}, iter)
-                # writer.add_scalars('Valid_dice_neg/pos2',  {'valid': valid_loss[8]}, iter)
-                # writer.add_scalars('Valid_dice_neg/pos3',  {'valid': valid_loss[9]}, iter)
-                # writer.add_scalars('Valid_dice_neg/pos4',  {'valid': valid_loss[10]}, iter)
-                # pass
+                writer.add_scalars('Loss/mask_loss', {'valid': valid_loss[1]}, iter)
+                writer.add_scalars('Loss/regr_loss',  {'valid': valid_loss[2]}, iter)
+                writer.add_scalars('Loss/hit_neg', {'valid': valid_loss[3]}, iter)
+                writer.add_scalars('Loss/pos1',  {'valid': valid_loss[4]}, iter)
 
             # Logging
             if (iter % iter_log == 0):
                 print('\r', end='', flush=True)
                 asterisk = '*' if iter in iter_save else ' '
                 log.write(
-                    '%0.5f  %5.1f%s %5.1f |  %5.3f  |  %5.3f ' % ( \
+                    '%0.5f  %5.1f%s %5.1f |  %5.3f  %5.3f  %5.3f |  %5.3f  %5.3f   %5.3f ' % ( \
                         rate, iter / 1000, asterisk, epoch,
-                        valid_loss[0],
-                        train_loss[0])
+                        valid_loss[0], valid_loss[1], valid_loss[2],
+                        train_loss[0], train_loss[1], train_loss[2])
                     )
                 log.write('\n')
                 # tensorboard
@@ -268,7 +262,7 @@ def run_train():
             truth_mask = truth_mask.cuda()
             regr_batch = regr_batch.cuda()
             logit = data_parallel(net, input)  # net(input)
-            loss = criterion(logit, truth_mask, regr_batch)
+            loss, mask_loss, regr_loss = criterion(logit, truth_mask, regr_batch)
             tn, tp, num_neg, num_pos = metric_hit(logit[:, 0], truth_mask)
 
             (loss / iter_accum).backward()
@@ -277,8 +271,8 @@ def run_train():
                 optimizer.zero_grad()
 
             # print statistics  ------------
-            l = np.array([loss.item(), tn, *tp])
-            n = np.array([batch_size, num_neg, *num_pos])
+            l = np.array([loss.item(), mask_loss.item(), regr_loss.item(), tn, *tp])
+            n = np.array([batch_size, batch_size, batch_size, num_neg, *num_pos])
 
             batch_loss = l
             sum_train_loss += l * n
@@ -293,8 +287,8 @@ def run_train():
             print(
                 '%0.5f  %5.1f%s %5.1f |  %5.3f  |  %5.3f ' % ( \
                     rate, iter / 1000, asterisk, epoch,
-                    valid_loss[0],
-                    batch_loss[0])
+                    valid_loss[0], valid_loss[1], valid_loss[2],
+                    train_loss[0], train_loss[1], train_loss[2])
                 , end='', flush=True)
             i = i + 1
         pass  # -- end of one data loader --
@@ -304,8 +298,8 @@ def run_train():
 
 def do_valid(net, valid_loader, out_dir=None):
     # out_dir=None
-    valid_num = np.zeros(3, np.float32)
-    valid_loss = np.zeros(3, np.float32)
+    valid_num = np.zeros(5, np.float32)
+    valid_loss = np.zeros(5, np.float32)
 
     for t, (input, truth_mask, regr_batch, id) in enumerate(valid_loader):
         # if b==5: break
@@ -315,15 +309,15 @@ def do_valid(net, valid_loader, out_dir=None):
 
         with torch.no_grad():
             logit = data_parallel(net, input)  # net(input)
-            loss = criterion(logit, truth_mask, regr_batch, size_average=False)
+            loss, mask_loss, regr_loss = criterion(logit, truth_mask, regr_batch, size_average=False)
             tn, tp, num_neg, num_pos = metric_hit(logit[:, 0], truth_mask)
             # dn, dp, num_neg, num_pos = metric_dice(logit, truth_mask, threshold=0.5, sum_threshold=100)
 
             # zz=0
         # ---
         batch_size = input.shape[0]
-        l = np.array([loss.item(), tn, *tp])
-        n = np.array([batch_size, num_neg, *num_pos])
+        l = np.array([loss.item(), mask_loss.item(), regr_loss.item(), tn, *tp])
+        n = np.array([batch_size, batch_size, batch_size, num_neg, *num_pos])
         valid_loss += l * n
         valid_num += n
 

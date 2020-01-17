@@ -10,26 +10,27 @@ IMAGE_RGB_MEAN = [0.485, 0.456, 0.406]
 IMAGE_RGB_STD = [0.229, 0.224, 0.225]
 
 
-def criterion(prediction, mask, regr, size_average=True):
+def criterion(prediction, mask, regr, weight = [1, 1], size_average=True):
     # prediction: mask, 'x', 'y', 'z', 'yaw', 'pitch', 'roll'
     #  prediction[batch_size, 8, 40, 128]
-    # Binary mask loss
+    # Focal loss
     pred_mask = torch.sigmoid(prediction[:, 0]) #[batch_size, 40, 128]
     #     mask_loss = mask * (1 - pred_mask)**2 * torch.log(pred_mask + 1e-12) + (1 - mask) * pred_mask**2 * torch.log(1 - pred_mask + 1e-12)
     # mask_loss = mask * torch.log(pred_mask + 1e-12) + (1 - mask) * torch.log(1 - pred_mask + 1e-12)  # [4, 40, 128] cross engtropy
-    mask_loss = nn.BCEWithLogitsLoss()(pred_mask, mask)
-    mask_loss = -mask_loss.mean(0).sum() # sum of batch loss
+    # mask_loss = nn.BCEWithLogitsLoss()(pred_mask, mask)
+    # mask_loss = -mask_loss.mean(0).sum() # sum of batch loss
+    mask_loss = FocalLoss()(pred_mask, mask)
 
     # Regression L1 loss
     pred_regr = prediction[:, 1:] # [batch_size, 7, 40, 128]
-    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1) # regr_loss per pixel in mask. [batch_size]
-    regr_loss = regr_loss.mean(0) # avg of batch loss
+    regr_loss = (torch.abs(pred_regr - regr).sum(1) * mask).sum(1).sum(1) / mask.sum(1).sum(1)  # regr_loss per pixel in mask. [batch_size]
+    regr_loss = regr_loss.mean(0)
 
     # Sum
-    loss = mask_loss + regr_loss
+    loss = (mask_loss * weight[0] + regr_loss * weight[1]) / (weight[0] + weight[1])
     if not size_average:
         loss *= prediction.shape[0]
-    return loss
+    return loss, mask_loss, regr_loss
 
 def metric_hit(logit, truth, threshold=0.5):
     num_class = 1
