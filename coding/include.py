@@ -34,6 +34,8 @@ from torch.nn.parallel.data_parallel import data_parallel
 from torch.nn.utils.rnn import *
 from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.hub import load_state_dict_from_url
+
 
 
 # std libs
