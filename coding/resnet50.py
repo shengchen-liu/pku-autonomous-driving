@@ -1,7 +1,7 @@
 import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 import cv2
-from tqdm import tqdm_notebook as tqdm
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 from functools import reduce
 import os
@@ -221,7 +221,7 @@ train_dataset = CarDataset(df_train, train_images_dir)
 dev_dataset = CarDataset(df_dev, train_images_dir)
 test_dataset = CarDataset(df_test, test_images_dir)
 
-BATCH_SIZE = 2
+BATCH_SIZE = 1
 
 # Create data generators - they will produce batches
 train_loader = DataLoader(dataset=train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
